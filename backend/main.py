@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import uuid
 from contextlib import asynccontextmanager, closing
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 
 DB_PATH = Path("janus.sqlite3")
 bridges = {}
+online = set()
 dashboards = set()
 
 
@@ -22,6 +24,12 @@ async def lifespan(app):
             CREATE TABLE IF NOT EXISTS devices (
                 device_id TEXT PRIMARY KEY,
                 schema_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS telemetry (
+                id INTEGER PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                received_at TEXT NOT NULL,
+                data_json TEXT NOT NULL
             );
         """)
     yield
@@ -80,15 +88,32 @@ async def register_device(schema: DeviceSchema):
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=409, detail="Device is already registered")
-    return {"device_id": schema.device_id}
+    return {"id": schema.device_id}
+
+
+def save_reading(db, msg, fields):
+    data = msg.get("data")
+    timestamp = msg.get("received_at")
+    if not isinstance(timestamp, str) or not isinstance(data, dict) or data.keys() != fields.keys():
+        return False
+    for name, value in data.items():
+        field = fields[name]
+        if type(value) not in (int, float) or not field["min"] <= value <= field["max"]:
+            return False
+    db.execute(
+        "INSERT INTO telemetry (device_id, received_at, data_json) VALUES (?, ?, ?)",
+        (msg["device_id"], timestamp, json.dumps(data)),
+    )
+    return True
 
 
 async def broadcast(msg: dict):
     for ws in list(dashboards):
         try:
             await ws.send_json(msg)
-        except Exception:
+        except (WebSocketDisconnect, RuntimeError, OSError):
             dashboards.discard(ws)
+
 
 @app.websocket("/ws/bridge")
 async def bridge_socket(ws: WebSocket):
@@ -96,15 +121,46 @@ async def bridge_socket(ws: WebSocket):
     device_id = None
     try:
         while True:
-            msg = await ws.receive_json()
-            device_id = msg.get("device_id", device_id)
-            if device_id is not None:
-                bridges[device_id] = ws
+            try:
+                msg = await ws.receive_json()
+            except (ValueError, KeyError):
+                continue
+            if not isinstance(msg, dict) or not isinstance(msg.get("device_id"), str):
+                continue
+            incoming_id = msg["device_id"]
+            if device_id is not None and (device_id != incoming_id or bridges.get(device_id) is not ws):
+                continue
+
+            kind = msg.get("type")
+            with closing(sqlite3.connect(DB_PATH)) as db, db:
+                row = db.execute(
+                    "SELECT schema_json FROM devices WHERE device_id = ?", (incoming_id,)
+                ).fetchone()
+                if row is None:
+                    continue
+                if kind == "telemetry":
+                    if not save_reading(db, msg, json.loads(row[0])["telemetry"]):
+                        continue
+                    online.add(incoming_id)
+                elif kind == "status" and isinstance(msg.get("connected"), bool):
+                    if msg["connected"]:
+                        online.add(incoming_id)
+                    else:
+                        online.discard(incoming_id)
+                elif kind != "ack" or device_id is None:
+                    continue
+
+            device_id = incoming_id
+            bridges[device_id] = ws
             await broadcast(msg)
     except WebSocketDisconnect:
+        pass
+    finally:
         if device_id is not None and bridges.get(device_id) is ws:
             del bridges[device_id]
+            online.discard(device_id)
             await broadcast({"type": "status", "device_id": device_id, "connected": False})
+
 
 @app.websocket("/ws/live")
 async def live_socket(ws: WebSocket):
@@ -114,16 +170,27 @@ async def live_socket(ws: WebSocket):
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
+        pass
+    finally:
         dashboards.discard(ws)
+
 
 @app.get("/api/devices")
 async def list_devices():
-    return {"devices": sorted(bridges)}
+    with closing(sqlite3.connect(DB_PATH)) as db:
+        rows = db.execute("SELECT device_id, schema_json FROM devices ORDER BY device_id").fetchall()
+    details = {
+        device_id: {"name": json.loads(schema)["name"], "connected": device_id in online}
+        for device_id, schema in rows
+    }
+    return {"devices": [device_id for device_id in details if details[device_id]["connected"]],
+            "device_details": details}
+
 
 @app.post("/api/devices/{device_id}/commands")
 async def send_command(device_id: str, command: Command):
     ws = bridges.get(device_id)
-    if ws is None:
+    if ws is None or device_id not in online:
         raise HTTPException(status_code=404, detail=f"device {device_id} is not connected")
     msg = {"type": "command", "id": f"c-{uuid.uuid4().hex[:8]}", "name": command.name, "args": command.args}
     await ws.send_json(msg)
