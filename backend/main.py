@@ -1,15 +1,22 @@
 import json
 import sqlite3
 import uuid
+from backend.users import bootstrap_admin
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from backend.auth import get_current_username
+from backend.permissions import require_device_role
+from backend.alerts.engine import evaluate_telemetry
+from backend.auth_routes import router as auth_router
+from backend.permission_routes import router as permission_router
+from backend.alerts.routes import router as alert_router
 
 DB_PATH = Path("janus.sqlite3")
 bridges = {}
@@ -19,6 +26,7 @@ dashboards = set()
 
 @asynccontextmanager
 async def lifespan(app):
+    bootstrap_admin()
     with closing(sqlite3.connect(DB_PATH)) as db, db:
         db.executescript("""
             CREATE TABLE IF NOT EXISTS devices (
@@ -36,6 +44,10 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Janus", lifespan=lifespan)
+app.include_router(auth_router)
+app.include_router(permission_router)
+app.include_router(alert_router)
+
 root = Path(__file__).resolve().parents[1]
 app.mount("/frontend", StaticFiles(directory=root / "frontend"), name="frontend")
 app.mount("/schemas", StaticFiles(directory=root / "schemas"), name="schemas")
@@ -149,10 +161,13 @@ async def bridge_socket(ws: WebSocket):
                         online.discard(incoming_id)
                 elif kind != "ack" or device_id is None:
                     continue
-
             device_id = incoming_id
             bridges[device_id] = ws
             await broadcast(msg)
+            if kind == "telemetry":
+                alerts = evaluate_telemetry(device_id, msg["data"])
+                for alert in alerts:
+                    await broadcast(alert)
     except WebSocketDisconnect:
         pass
     finally:
@@ -188,7 +203,14 @@ async def list_devices():
 
 
 @app.post("/api/devices/{device_id}/commands")
-async def send_command(device_id: str, command: Command):
+async def send_command(
+    device_id: str,
+    command: Command,
+    username: str = Depends(get_current_username),
+):
+
+    require_device_role(username, device_id, "operator")
+
     ws = bridges.get(device_id)
     if ws is None or device_id not in online:
         raise HTTPException(status_code=404, detail=f"device {device_id} is not connected")

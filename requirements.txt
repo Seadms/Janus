@@ -2,3 +2,5 @@ fastapi
 pyserial
 uvicorn[standard]
 websockets
+PyJWT>=2.10
+pwdlib[argon2]>=0.2
