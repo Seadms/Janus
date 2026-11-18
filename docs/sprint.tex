@@ -1,0 +1,179 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{parskip}
+\usepackage[inline]{enumitem}
+\usepackage{titlesec}
+\usepackage{booktabs}
+\usepackage{tabularx}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{1em}{}
+\setlist{nosep}
+\setcounter{secnumdepth}{0}
+
+% \story{id}{title}{preconditions}{postconditions}
+\newcommand{\story}[4]{%
+  \par\smallskip\noindent\begin{minipage}{\linewidth}
+  \textbf{#1. #2}\\
+  \textbf{Pre:} \begin{itemize*}[label={}, itemjoin={{ }}]#3\end{itemize*}\\
+  \textbf{Post:} \begin{itemize*}[label={}, itemjoin={{ }}]#4\end{itemize*}
+  \end{minipage}\par
+}
+
+\title{\vspace{-1.5cm}Janus: Telemetry and Control Platform for Embedded Systems\\\large Sprint Report}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-1cm}
+
+\section{Functionality at the End of Sprint 1}
+
+\begin{itemize}[leftmargin=1.5em]
+\item The board sends tilt and IMU readings at 10 Hz and carries out motor commands.
+\item The bridge relays readings and commands between the board and the backend.
+\item A simulator stands in for the board.
+\item Devices are registered by uploading a schema, which is validated.
+\item Readings are validated against the schema and stored.
+\item The dashboard lists devices with online status and shows live readings.
+\item Users log in, and the administrator creates accounts and assigns device roles.
+\item Only operators can send commands.
+\item Alert rules can be created, edited, and deleted, and alerts fire live.
+\end{itemize}
+
+\section{User Stories Implemented}
+
+\begin{center}
+\begin{tabularx}{0.7\textwidth}{@{} l X c @{}}
+\toprule
+\textbf{ID} & \textbf{Story} & \textbf{Size} \\
+\midrule
+1 & Log In & 3 \\
+1.1 & Create Initial Administrator & 1 \\
+2 & View Device List & 2 \\
+3.1 & Build Dashboard From Schema & 8 \\
+3.2 & Stream Live Readings & 5 \\
+7 & Create User Account & 2 \\
+8.1 & Validate Device Schema & 3 \\
+8.2 & Store Registered Device & 2 \\
+10.1 & Grant Device Access & 3 \\
+11.1 & Create Alert Rule & 3 \\
+11.2 & Edit or Delete Alert Rule & 2 \\
+12.1 & Send Readings Through Bridge & 5 \\
+12.2 & Validate and Store Readings & 3 \\
+14.1 & Forward Command to Bridge & 3 \\
+14.2 & Carry Out Command on Device & 3 \\
+N1 & Simulate a Device & 3 \\
+N2 & Recover From a Silent Serial Link & 2 \\
+\midrule
+ & \textbf{Total} & \textbf{53} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\newpage
+
+\section{Changes to User Stories}
+
+\textbf{Changed:}
+\begin{itemize}[leftmargin=1.5em]
+\item 3.2: live readings no longer wait for 12.2 to store them.
+\end{itemize}
+
+\textbf{Broken down:} None.
+
+\textbf{New stories:}
+\begin{itemize}[leftmargin=1.5em]
+\item 1.1, Create Initial Administrator: implemented right away, because no one could log in without it.
+\item 3.3, Restrict Live Readings to Authorized Users: added to the backlog for Sprint 2.
+\item N1, Simulate a Device: implemented right away, so the team could work without the board.
+\item N2, Recover From a Silent Serial Link: implemented right away, because the serial link sometimes stalled.
+\end{itemize}
+
+\section{Lessons Learned}
+
+\begin{itemize}[leftmargin=1.5em]
+\item Most work was merged on the last day. Next time, merge small pieces throughout the sprint.
+\item Two backend members edited the same file, which caused conflicts. Next time, agree on file ownership first.
+\item One pull request went outside its owner's scope. Next time, check scope before opening a pull request.
+\end{itemize}
+
+\section{User Stories Yet to Be Implemented}
+
+\story{3.3}{Restrict Live Readings to Authorized Users}
+{\item The user is logged in.}
+{\item The user receives live readings only for devices they have a role on.}
+
+\story{4.1}{Query Past Readings}
+{\item The user is logged in and has access to the device.
+ \item The device has stored readings.}
+{\item Janus returns the readings for the chosen fields and time range.}
+
+\story{4.2}{Display Past Readings}
+{\item Past readings have been returned.}
+{\item The user sees them as a chart or a table.}
+
+\story{5}{View Alerts}
+{\item The user is logged in.}
+{\item The user sees the alerts for their devices.}
+
+\story{6.1}{Build Command Form From Schema}
+{\item The user is logged in with operator access.
+ \item The device is registered.}
+{\item The dashboard shows a form for each command, limited by the schema.}
+
+\story{6.2}{Submit Command}
+{\item The user is logged in with operator access.
+ \item The command and its values match the schema.}
+{\item The command is sent, and the user sees whether it succeeded.}
+
+\story{9}{Remove Device}
+{\item The administrator is logged in.
+ \item The device is registered.}
+{\item The device no longer appears or accepts data.}
+
+\story{10.2}{Revoke Device Access}
+{\item The administrator is logged in.
+ \item The user has a role on the device.}
+{\item The user can no longer see or control the device.}
+
+\story{13}{Evaluate Alert Rules}
+{\item A new reading has been stored.}
+{\item An alert is recorded for each rule the reading breaks.}
+
+\section{Plan for Sprint 2}
+
+The remaining backlog is 25 points of 78. Sprint 2 takes all of it and completes the project.
+
+\begin{center}
+\begin{tabularx}{0.7\textwidth}{@{} l X c @{}}
+\toprule
+\textbf{ID} & \textbf{Story} & \textbf{Size} \\
+\midrule
+3.3 & Restrict Live Readings to Authorized Users & 2 \\
+4.1 & Query Past Readings & 3 \\
+4.2 & Display Past Readings & 5 \\
+5 & View Alerts & 2 \\
+6.1 & Build Command Form From Schema & 3 \\
+6.2 & Submit Command & 3 \\
+9 & Remove Device & 2 \\
+10.2 & Revoke Device Access & 2 \\
+13 & Evaluate Alert Rules & 3 \\
+\midrule
+ & \textbf{Total} & \textbf{25} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Functionality at the end of Sprint 2:}
+\begin{itemize}[leftmargin=1.5em]
+\item Users see live readings only for their own devices.
+\item Operators send commands from forms and see the result.
+\item Alerts are saved and can be viewed.
+\item Past readings can be viewed as a chart or table.
+\item The administrator can remove devices and revoke device access.
+\item Every user story in the backlog is implemented.
+\end{itemize}
+
+\end{document}
