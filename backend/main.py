@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 
@@ -26,6 +28,14 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Janus", lifespan=lifespan)
+root = Path(__file__).resolve().parents[1]
+app.mount("/frontend", StaticFiles(directory=root / "frontend"), name="frontend")
+app.mount("/schemas", StaticFiles(directory=root / "schemas"), name="schemas")
+
+
+@app.get("/", include_in_schema=False)
+async def dashboard():
+    return FileResponse(root / "frontend" / "index.html")
 
 
 class NumericField(BaseModel):
