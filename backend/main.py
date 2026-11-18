@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-
+from backend.auth_routes import router as auth_router
 
 DB_PATH = Path("janus.sqlite3")
 bridges = {}
@@ -36,6 +36,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Janus", lifespan=lifespan)
+app.include_router(auth_router)
 root = Path(__file__).resolve().parents[1]
 app.mount("/frontend", StaticFiles(directory=root / "frontend"), name="frontend")
 app.mount("/schemas", StaticFiles(directory=root / "schemas"), name="schemas")
