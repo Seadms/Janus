@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import uuid
+from backend.users import bootstrap_admin
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import Literal
@@ -25,6 +26,7 @@ dashboards = set()
 
 @asynccontextmanager
 async def lifespan(app):
+    bootstrap_admin()
     with closing(sqlite3.connect(DB_PATH)) as db, db:
         db.executescript("""
             CREATE TABLE IF NOT EXISTS devices (

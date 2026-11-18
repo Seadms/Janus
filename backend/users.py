@@ -1,4 +1,4 @@
-
+import os
 import sqlite3
 from pathlib import Path
 
@@ -73,3 +73,26 @@ def authenticate_user(username: str, password: str):
         return None
 
     return user
+
+def bootstrap_admin():
+    """Create the first administrator from environment variables."""
+    initialize_users()
+
+    with connect() as db:
+        existing_admin = db.execute(
+            "SELECT id FROM users WHERE is_admin = 1 LIMIT 1"
+        ).fetchone()
+
+    if existing_admin:
+        return
+
+    username = os.getenv("JANUS_ADMIN_USER")
+    password = os.getenv("JANUS_ADMIN_PASSWORD")
+
+    if not username or not password:
+        raise RuntimeError(
+            "No admin exists. Set JANUS_ADMIN_USER and "
+            "JANUS_ADMIN_PASSWORD before starting Janus."
+        )
+
+    create_user(username, password, is_admin=True)
