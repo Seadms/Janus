@@ -1,14 +1,77 @@
+import sqlite3
 import uuid
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from contextlib import asynccontextmanager, closing
+from pathlib import Path
+from typing import Literal
 
-app = FastAPI(title="Janus")
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
+
+
+DB_PATH = Path("janus.sqlite3")
 bridges = {}
 dashboards = set()
 
+
+@asynccontextmanager
+async def lifespan(app):
+    with closing(sqlite3.connect(DB_PATH)) as db, db:
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS devices (
+                device_id TEXT PRIMARY KEY,
+                schema_json TEXT NOT NULL
+            );
+        """)
+    yield
+
+
+app = FastAPI(title="Janus", lifespan=lifespan)
+
+
+class NumericField(BaseModel):
+    type: Literal["number"]
+    label: str
+    unit: str
+    min: float = Field(strict=True, allow_inf_nan=False)
+    max: float = Field(strict=True, allow_inf_nan=False)
+
+
+class DeviceCommand(BaseModel):
+    label: str
+    args: dict[str, NumericField]
+
+
+class DeviceSchema(BaseModel):
+    device_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: str
+    rate_hz: float = Field(gt=0, strict=True, allow_inf_nan=False)
+    telemetry: dict[str, NumericField] = Field(min_length=1)
+    commands: dict[str, DeviceCommand]
+
+
 class Command(BaseModel):
     name: str
-    args: dict = {}
+    args: dict = Field(default_factory=dict)
+
+
+@app.post("/api/devices", status_code=201)
+async def register_device(schema: DeviceSchema):
+    fields = list(schema.telemetry.values())
+    for command in schema.commands.values():
+        fields.extend(command.args.values())
+    if any(field.min > field.max for field in fields):
+        raise HTTPException(status_code=422, detail="Field min must be at or below max")
+
+    with closing(sqlite3.connect(DB_PATH)) as db, db:
+        result = db.execute(
+            "INSERT INTO devices VALUES (?, ?) ON CONFLICT(device_id) DO NOTHING",
+            (schema.device_id, schema.model_dump_json()),
+        )
+        if result.rowcount == 0:
+            raise HTTPException(status_code=409, detail="Device is already registered")
+    return {"device_id": schema.device_id}
+
 
 async def broadcast(msg: dict):
     for ws in list(dashboards):
