@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111111">
+  <title>Janus</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/frontend/styles.css?v=3">
+  <script type="module" src="/frontend/dashboard.js?v=2"></script>
+</head>
+<body>
+  <main id="login" class="login" hidden>
+    <div class="login-inner">
+      <a class="wordmark" href="/" aria-label="Janus home"><span class="mark" aria-hidden="true"></span>Janus</a>
+      <form id="login-form" class="panel stacked">
+        <h1>Sign in</h1>
+        <label>Username<input name="username" autocomplete="username" required maxlength="64"></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" required maxlength="256"></label>
+        <button class="primary">Sign in</button>
+        <p id="login-error" class="feedback" role="status" hidden></p>
+      </form>
+    </div>
+  </main>
+
+  <div id="workspace" class="workspace" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="#live" aria-label="Janus"><span class="mark" aria-hidden="true"></span></a>
+      <nav class="nav" aria-label="Workspace">
+        <a href="#live" data-view="live"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12h5l3-7 4 14 3-7h5"/></svg>Live</a>
+        <a href="#history" data-view="history" data-session><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>History</a>
+        <a href="#alerts" data-view="alerts" data-session><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 17h14l-2-3v-4a5 5 0 0 0-10 0v4l-2 3Zm5 3h4"/></svg>Alerts</a>
+        <a href="#admin" data-view="admin" data-admin><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-8 2v4"/></svg>Admin</a>
+      </nav>
+      <button id="logout" class="secondary" hidden>Sign out</button>
+    </aside>
+
+    <div class="work-main">
+      <main class="content">
+        <div class="toolbar">
+          <div class="heading">
+            <h1 id="view-title">Live telemetry</h1>
+          </div>
+          <div id="toolbar-actions" class="toolbar-actions">
+            <p id="context">Waiting for a device</p>
+            <select id="device-picker" aria-label="Select device" hidden></select>
+            <label class="range" id="window-control">
+              <span>Window</span>
+              <select id="range">
+                <option value="15">Last 15 seconds</option>
+                <option value="30">Last 30 seconds</option>
+                <option value="60">Last 60 seconds</option>
+              </select>
+            </label>
+            <button id="jump-commands" type="button" class="secondary" hidden>Commands</button>
+          </div>
+        </div>
+
+        <section id="view-live" class="live-layout" aria-label="Live telemetry">
+          <section class="panel telemetry" aria-label="Telemetry">
+            <div id="metrics" class="metrics" aria-label="Chart metric"></div>
+            <div class="chart-heading">
+              <h2 id="chart-title">Signal trace</h2>
+              <span id="chart-state" role="status"></span>
+            </div>
+            <div class="chart" id="chart">
+              <canvas id="trace" role="img" aria-label="Live telemetry plot"></canvas>
+              <output id="tooltip" class="tooltip" hidden></output>
+              <p id="chart-empty" class="chart-empty">Waiting for device discovery…</p>
+            </div>
+          </section>
+
+          <div class="reports">
+            <section class="panel report" aria-labelledby="devices-title">
+              <div class="report-heading">
+                <h2 id="devices-title">Devices</h2>
+                <span id="device-count"></span>
+              </div>
+              <ul id="devices" class="device-list"></ul>
+              <p class="placeholder" id="devices-empty">Discovering devices…</p>
+            </section>
+            <section class="panel report" aria-labelledby="details-title">
+              <div class="report-heading"><h2 id="details-title">Device details</h2></div>
+              <p class="placeholder" id="details-empty">Select a device to see its details.</p>
+              <div id="details" hidden>
+                <p id="description" class="description"></p>
+                <dl class="details">
+                  <div><dt>Device ID</dt><dd id="device-id" class="mono"></dd></div>
+                  <div><dt>Schema rate</dt><dd id="rate" class="mono"></dd></div>
+                  <div><dt>Last reading</dt><dd id="last-reading" class="mono"></dd></div>
+                </dl>
+              </div>
+            </section>
+            <section id="commands" class="panel report" aria-labelledby="commands-title" hidden>
+              <div class="report-heading"><h2 id="commands-title">Commands</h2></div>
+              <form id="command-form" class="stacked">
+                <label>Command<select id="command-picker" aria-label="Command"></select></label>
+                <div id="command-args" class="stacked"></div>
+                <div class="actions"><button id="command-send" class="primary">Send command</button></div>
+                <p id="command-result" class="feedback" role="status" hidden></p>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-history" hidden>
+          <form id="history-form" class="panel form-panel">
+            <div class="form-row">
+              <label>From<input id="history-start" type="datetime-local" step="1" required></label>
+              <label>To<input id="history-end" type="datetime-local" step="1" required></label>
+            </div>
+            <fieldset><legend>Fields</legend><div id="history-fields" class="choices"></div></fieldset>
+            <div class="actions"><button class="primary" id="query-history">Load readings</button></div>
+            <p id="history-status" class="feedback" role="status" hidden></p>
+          </form>
+          <div id="history-results" class="history-results"></div>
+        </section>
+
+        <section id="view-alerts" class="panel form-panel" hidden>
+          <div class="section-heading"><h2>Alert log</h2><button id="refresh-alerts" type="button" class="secondary">Refresh</button></div>
+          <div id="alert-rows"></div>
+        </section>
+
+        <section id="view-admin" hidden>
+          <nav class="admin-tabs" aria-label="Administration">
+            <a href="#admin/users" data-admin-tab="users">Users</a>
+            <a href="#admin/devices" data-admin-tab="devices">Devices</a>
+            <a href="#admin/access" data-admin-tab="access">Access</a>
+            <a href="#admin/rules" data-admin-tab="rules">Alert rules</a>
+          </nav>
+
+          <div id="admin-users" class="admin-layout" hidden>
+            <form id="user-form" class="panel form-panel stacked">
+              <h2>Create user</h2>
+              <label>Username<input name="username" autocomplete="off" pattern="[A-Za-z0-9_.\-]+" maxlength="64" required></label>
+              <label>Starting password<input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="256" required></label>
+              <div class="actions"><button class="primary">Create user</button></div>
+              <p id="user-status" class="feedback" role="status" hidden></p>
+            </form>
+            <section class="panel form-panel"><h2>Accounts</h2><div id="user-rows"></div></section>
+          </div>
+
+          <div id="admin-devices" class="admin-layout" hidden>
+            <form id="device-form" class="panel form-panel stacked">
+              <h2>Register device</h2>
+              <label>Upload schema<input id="schema-file" type="file" accept=".json,application/json"></label>
+              <label>Schema JSON<textarea name="schema" rows="8" spellcheck="false" required></textarea></label>
+              <div class="actions"><button class="primary">Register device</button></div>
+              <p id="register-status" class="feedback" role="status" hidden></p>
+            </form>
+            <section class="panel form-panel">
+              <h2>Registered devices</h2>
+              <div id="registered-rows"></div>
+              <p id="remove-status" class="feedback" role="status" hidden></p>
+            </section>
+          </div>
+
+          <div id="admin-access" class="admin-layout" hidden>
+            <form id="access-form" class="panel form-panel stacked">
+              <h2>Grant access</h2>
+              <label>User<select name="username" aria-label="User" required></select></label>
+              <label>Role<select name="role" aria-label="Role"><option value="viewer">Viewer</option><option value="operator">Operator</option></select></label>
+              <div class="actions"><button class="primary">Save access</button></div>
+              <p id="access-status" class="feedback" role="status" hidden></p>
+            </form>
+            <section class="panel form-panel"><h2>Device access</h2><div id="access-rows"></div></section>
+          </div>
+
+          <div id="admin-rules" class="admin-layout" hidden>
+            <form id="rule-form" class="panel form-panel stacked">
+              <h2 id="rule-title">Create alert rule</h2>
+              <label>Field<select name="field" aria-label="Field" required></select></label>
+              <div class="form-row">
+                <label>Comparison<select name="op" aria-label="Comparison"><option value=">">Greater than</option><option value="<">Less than</option><option value=">=">At least</option><option value="<=">At most</option></select></label>
+                <label>Threshold<input name="threshold" type="number" step="any" required></label>
+              </div>
+              <label class="inline-check"><input name="enabled" type="checkbox" checked>Enabled</label>
+              <div class="actions"><button class="primary">Save rule</button><button id="cancel-rule" type="button" class="secondary" hidden>Cancel edit</button></div>
+              <p id="rule-status" class="feedback" role="status" hidden></p>
+            </form>
+            <section class="panel form-panel"><h2>Alert rules</h2><div id="rule-rows"></div></section>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+  <dialog id="confirm-dialog">
+    <form method="dialog" class="stacked">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-description"></p>
+      <div class="actions"><button value="cancel" class="secondary" autofocus>Cancel</button><button value="confirm" class="danger" id="confirm-action">Confirm</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
