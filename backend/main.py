@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from backend.auth import get_current_username
 from backend.permissions import require_device_role
+from backend.alerts.engine import evaluate_telemetry
 from backend.auth_routes import router as auth_router
 from backend.permission_routes import router as permission_router
 from backend.alerts.routes import router as alert_router
@@ -158,10 +159,13 @@ async def bridge_socket(ws: WebSocket):
                         online.discard(incoming_id)
                 elif kind != "ack" or device_id is None:
                     continue
-
             device_id = incoming_id
             bridges[device_id] = ws
             await broadcast(msg)
+            if kind == "telemetry":
+                alerts = evaluate_telemetry(device_id, msg["data"])
+                for alert in alerts:
+                    await broadcast(alert)
     except WebSocketDisconnect:
         pass
     finally:
