@@ -5,11 +5,15 @@ from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+from backend.auth import get_current_username
+from backend.permissions import require_device_role
 from backend.auth_routes import router as auth_router
+from backend.permission_routes import router as permission_router
 
 DB_PATH = Path("janus.sqlite3")
 bridges = {}
@@ -37,6 +41,7 @@ async def lifespan(app):
 
 app = FastAPI(title="Janus", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(permission_router)
 root = Path(__file__).resolve().parents[1]
 app.mount("/frontend", StaticFiles(directory=root / "frontend"), name="frontend")
 app.mount("/schemas", StaticFiles(directory=root / "schemas"), name="schemas")
@@ -189,7 +194,14 @@ async def list_devices():
 
 
 @app.post("/api/devices/{device_id}/commands")
-async def send_command(device_id: str, command: Command):
+async def send_command(
+    device_id: str,
+    command: Command,
+    username: str = Depends(get_current_username),
+):
+
+    require_device_role(username, device_id, "operator")
+
     ws = bridges.get(device_id)
     if ws is None or device_id not in online:
         raise HTTPException(status_code=404, detail=f"device {device_id} is not connected")
