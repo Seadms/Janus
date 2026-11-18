@@ -1,10 +1,22 @@
 import uuid
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 app = FastAPI(title="Janus")
+root = Path(__file__).resolve().parents[1]
+app.mount("/frontend", StaticFiles(directory=root / "frontend"), name="frontend")
+app.mount("/schemas", StaticFiles(directory=root / "schemas"), name="schemas")
+
 bridges = {}
 dashboards = set()
+
+@app.get("/", include_in_schema=False)
+async def dashboard():
+    return FileResponse(root / "frontend" / "index.html")
 
 class Command(BaseModel):
     name: str
