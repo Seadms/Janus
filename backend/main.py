@@ -14,6 +14,7 @@ from backend.auth import get_current_username
 from backend.permissions import require_device_role
 from backend.auth_routes import router as auth_router
 from backend.permission_routes import router as permission_router
+from backend.alerts.routes import router as alert_router
 
 DB_PATH = Path("janus.sqlite3")
 bridges = {}
@@ -42,6 +43,8 @@ async def lifespan(app):
 app = FastAPI(title="Janus", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(permission_router)
+app.include_router(alert_router)
+
 root = Path(__file__).resolve().parents[1]
 app.mount("/frontend", StaticFiles(directory=root / "frontend"), name="frontend")
 app.mount("/schemas", StaticFiles(directory=root / "schemas"), name="schemas")
