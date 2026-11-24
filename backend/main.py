@@ -1,4 +1,5 @@
 import json
+import math
 import sqlite3
 import uuid
 from backend.users import bootstrap_admin
@@ -6,7 +7,7 @@ from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -19,6 +20,7 @@ from backend.permission_routes import router as permission_router
 from backend.alerts.routes import router as alert_router
 
 DB_PATH = Path("janus.sqlite3")
+RETENTION_SECONDS = 14 * 24 * 60 * 60
 bridges = {}
 online = set()
 dashboards = set()
@@ -39,6 +41,7 @@ async def lifespan(app):
                 received_at TEXT NOT NULL,
                 data_json TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS telemetry_device_time ON telemetry(device_id, received_at);
         """)
     yield
 
@@ -101,6 +104,46 @@ async def register_device(schema: DeviceSchema):
         if result.rowcount == 0:
             raise HTTPException(status_code=409, detail="Device is already registered")
     return {"id": schema.device_id}
+
+
+def device_schema(device_id):
+    with closing(sqlite3.connect(DB_PATH)) as db:
+        row = db.execute("SELECT schema_json FROM devices WHERE device_id = ?", (device_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Device not found")
+    return json.loads(row[0])
+
+
+@app.get("/api/devices/{device_id}/telemetry")
+def history(
+    device_id: str, start: float, end: float, fields: list[str] = Query(),
+    username: str = Depends(get_current_username),
+):
+    require_device_role(username, device_id, "viewer")
+    schema = device_schema(device_id)
+    if not fields or set(fields) - schema["telemetry"].keys():
+        raise HTTPException(422, "Choose fields from the device schema")
+    if not (math.isfinite(start) and math.isfinite(end) and 0 < end - start <= RETENTION_SECONDS):
+        raise HTTPException(422, "Choose a valid time range of up to 14 days")
+
+    step = max((end - start) / 600, 0.1)
+    with closing(sqlite3.connect(DB_PATH)) as db:
+        rows = db.execute("""
+            WITH readings AS (
+                SELECT ROUND((julianday(received_at) - 2440587.5) * 86400, 3) AS timestamp, data_json
+                FROM telemetry WHERE device_id = ?
+            )
+            SELECT MIN(timestamp) AS timestamp, data_json FROM readings
+            WHERE timestamp BETWEEN ? AND ?
+            GROUP BY CAST((timestamp - ?) / ? AS INTEGER)
+            ORDER BY timestamp
+        """, (device_id, start, end, start, step)).fetchall()
+
+    samples = []
+    for timestamp, encoded in rows:
+        data = json.loads(encoded)
+        samples.append({"timestamp": timestamp, "data": {field: data.get(field) for field in fields}})
+    return {"samples": samples}
 
 
 def save_reading(db, msg, fields):
