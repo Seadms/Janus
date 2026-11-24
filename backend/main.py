@@ -2,7 +2,7 @@ import json
 import math
 import sqlite3
 import uuid
-from backend.users import bootstrap_admin
+from backend.users import bootstrap_admin, get_user
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import Literal
@@ -88,7 +88,15 @@ class Command(BaseModel):
     args: dict = Field(default_factory=dict)
 
 
-@app.post("/api/devices", status_code=201)
+def require_admin(username: str = Depends(get_current_username)):
+    user = get_user(username)
+    if user is None:
+        raise HTTPException(401, "User not found")
+    if not user["is_admin"]:
+        raise HTTPException(403, "Administrator permission required")
+
+
+@app.post("/api/devices", status_code=201, dependencies=[Depends(require_admin)])
 async def register_device(schema: DeviceSchema):
     fields = list(schema.telemetry.values())
     for command in schema.commands.values():
@@ -104,6 +112,20 @@ async def register_device(schema: DeviceSchema):
         if result.rowcount == 0:
             raise HTTPException(status_code=409, detail="Device is already registered")
     return {"id": schema.device_id}
+
+
+@app.delete("/api/devices/{device_id}", dependencies=[Depends(require_admin)])
+async def remove_device(device_id: str):
+    with closing(sqlite3.connect(DB_PATH)) as db, db:
+        if not db.execute("DELETE FROM devices WHERE device_id = ?", (device_id,)).rowcount:
+            raise HTTPException(404, "Device not found")
+        db.execute("DELETE FROM telemetry WHERE device_id = ?", (device_id,))
+    bridge = bridges.pop(device_id, None)
+    online.discard(device_id)
+    if bridge is not None:
+        with suppress(WebSocketDisconnect, RuntimeError, OSError):
+            await bridge.close(code=1008)
+    return {"ok": True}
 
 
 def device_schema(device_id):
@@ -146,15 +168,20 @@ def history(
     return {"samples": samples}
 
 
+def values_match(data, fields):
+    if not isinstance(data, dict) or data.keys() != fields.keys():
+        return False
+    return all(
+        type(value) in (int, float) and fields[name]["min"] <= value <= fields[name]["max"]
+        for name, value in data.items()
+    )
+
+
 def save_reading(db, msg, fields):
     data = msg.get("data")
     timestamp = msg.get("received_at")
-    if not isinstance(timestamp, str) or not isinstance(data, dict) or data.keys() != fields.keys():
+    if not isinstance(timestamp, str) or not values_match(data, fields):
         return False
-    for name, value in data.items():
-        field = fields[name]
-        if type(value) not in (int, float) or not field["min"] <= value <= field["max"]:
-            return False
     db.execute(
         "INSERT INTO telemetry (device_id, received_at, data_json) VALUES (?, ?, ?)",
         (msg["device_id"], timestamp, json.dumps(data)),
@@ -253,6 +280,9 @@ async def send_command(
 ):
 
     require_device_role(username, device_id, "operator")
+    command_schema = device_schema(device_id)["commands"].get(command.name)
+    if command_schema is None or not values_match(command.args, command_schema["args"]):
+        raise HTTPException(422, "Command or arguments do not match the device schema")
 
     ws = bridges.get(device_id)
     if ws is None or device_id not in online:
