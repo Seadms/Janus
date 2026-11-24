@@ -1,9 +1,10 @@
+import asyncio
 import json
 import math
 import sqlite3
 import uuid
-from backend.users import bootstrap_admin, get_user
 from contextlib import asynccontextmanager, closing, suppress
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -13,21 +14,38 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.auth import decode_access_token, get_current_username
-from backend.permissions import get_device_role, require_device_role
+from backend.permissions import get_device_role, initialize_permissions, require_device_role
+from backend.users import DB_PATH, bootstrap_admin, get_user, initialize_users, migrate_auth_database
+from backend.alerts.rules import initialize_alert_rules
 from backend.alerts.engine import evaluate_telemetry
 from backend.auth_routes import router as auth_router
 from backend.permission_routes import router as permission_router
 from backend.alerts.routes import router as alert_router
 
-DB_PATH = Path("janus.sqlite3")
 RETENTION_SECONDS = 14 * 24 * 60 * 60
 bridges = {}
 online = set()
 dashboards = {}
 
 
+def expire_readings():
+    cutoff = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() - RETENTION_SECONDS, timezone.utc)
+    with closing(sqlite3.connect(DB_PATH)) as db, db:
+        db.execute("DELETE FROM telemetry WHERE julianday(received_at) < julianday(?)", (cutoff.isoformat(),))
+
+
+async def cleanup_daily():
+    while True:
+        await asyncio.sleep(24 * 60 * 60)
+        await asyncio.to_thread(expire_readings)
+
+
 @asynccontextmanager
 async def lifespan(app):
+    initialize_users()
+    initialize_permissions()
+    initialize_alert_rules()
+    migrate_auth_database()
     bootstrap_admin()
     with closing(sqlite3.connect(DB_PATH)) as db, db:
         db.executescript("""
@@ -43,7 +61,14 @@ async def lifespan(app):
             );
             CREATE INDEX IF NOT EXISTS telemetry_device_time ON telemetry(device_id, received_at);
         """)
-    yield
+    expire_readings()
+    cleanup = asyncio.create_task(cleanup_daily())
+    try:
+        yield
+    finally:
+        cleanup.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup
 
 
 app = FastAPI(title="Janus", lifespan=lifespan)
@@ -96,6 +121,14 @@ def require_admin(username: str = Depends(get_current_username)):
         raise HTTPException(403, "Administrator permission required")
 
 
+def device_schema(device_id):
+    with closing(sqlite3.connect(DB_PATH)) as db:
+        row = db.execute("SELECT schema_json FROM devices WHERE device_id = ?", (device_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Device not found")
+    return json.loads(row[0])
+
+
 @app.get("/api/devices/{device_id}/schema")
 def read_schema(device_id: str, username: str = Depends(get_current_username)):
     require_device_role(username, device_id, "viewer")
@@ -126,20 +159,14 @@ async def remove_device(device_id: str):
         if not db.execute("DELETE FROM devices WHERE device_id = ?", (device_id,)).rowcount:
             raise HTTPException(404, "Device not found")
         db.execute("DELETE FROM telemetry WHERE device_id = ?", (device_id,))
+        db.execute("DELETE FROM device_permissions WHERE device_id = ?", (device_id,))
+        db.execute("DELETE FROM alert_rules WHERE device_id = ?", (device_id,))
     bridge = bridges.pop(device_id, None)
     online.discard(device_id)
     if bridge is not None:
         with suppress(WebSocketDisconnect, RuntimeError, OSError):
             await bridge.close(code=1008)
     return {"ok": True}
-
-
-def device_schema(device_id):
-    with closing(sqlite3.connect(DB_PATH)) as db:
-        row = db.execute("SELECT schema_json FROM devices WHERE device_id = ?", (device_id,)).fetchone()
-    if row is None:
-        raise HTTPException(404, "Device not found")
-    return json.loads(row[0])
 
 
 @app.get("/api/devices/{device_id}/telemetry")
