@@ -22,7 +22,7 @@ Build everything to work with any device. Read field and command names (like `ti
 - Capacity test: 10 simulated devices at 10 readings per second with 20 dashboards open, checking that everything shows up within 1 second.
 - Add a shared token so the backend only accepts known bridges.
 - Widen the schema's gyro range to ±260, and keep `tilt_deg` between -180 and 180 in the firmware.
-- Sprint reports 2 and 3.
+- User manual.
 
 ## Running it
 
