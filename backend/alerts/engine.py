@@ -46,7 +46,7 @@ def evaluate_telemetry(device_id: str, telemetry: dict):
                 "message": f"{metric} crossed alert threshold",
             })
 
-            active_alerts[key] = triggered
+        active_alerts[key] = triggered
 
     for alert in alerts:
         save_alert(alert)
