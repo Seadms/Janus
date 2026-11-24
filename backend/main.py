@@ -161,12 +161,17 @@ async def remove_device(device_id: str):
         db.execute("DELETE FROM telemetry WHERE device_id = ?", (device_id,))
         db.execute("DELETE FROM device_permissions WHERE device_id = ?", (device_id,))
         db.execute("DELETE FROM alert_rules WHERE device_id = ?", (device_id,))
+        db.execute("DELETE FROM alert_history WHERE device_id = ?", (device_id,))
     bridge = bridges.pop(device_id, None)
     online.discard(device_id)
     if bridge is not None:
         with suppress(WebSocketDisconnect, RuntimeError, OSError):
             await bridge.close(code=1008)
     return {"ok": True}
+
+
+def iso(timestamp):
+    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 @app.get("/api/devices/{device_id}/telemetry")
@@ -186,13 +191,13 @@ def history(
         rows = db.execute("""
             WITH readings AS (
                 SELECT ROUND((julianday(received_at) - 2440587.5) * 86400, 3) AS timestamp, data_json
-                FROM telemetry WHERE device_id = ?
+                FROM telemetry WHERE device_id = ? AND received_at BETWEEN ? AND ?
             )
             SELECT MIN(timestamp) AS timestamp, data_json FROM readings
             WHERE timestamp BETWEEN ? AND ?
             GROUP BY CAST((timestamp - ?) / ? AS INTEGER)
             ORDER BY timestamp
-        """, (device_id, start, end, start, step)).fetchall()
+        """, (device_id, iso(start), iso(end), start, end, start, step)).fetchall()
 
     samples = []
     for timestamp, encoded in rows:
