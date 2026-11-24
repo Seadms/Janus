@@ -1,10 +1,11 @@
 import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from backend.auth import hash_password, verify_password
 
-DB_PATH = Path(__file__).resolve().parent.parent / "janus_auth.db"
+DB_PATH = Path("janus.sqlite3")
 
 
 def connect():
@@ -96,3 +97,24 @@ def bootstrap_admin():
         )
 
     create_user(username, password, is_admin=True)
+
+
+def migrate_auth_database():
+    """Copy the old auth tables once, leaving the original database intact."""
+    legacy = Path(__file__).resolve().parents[1] / "janus_auth.db"
+    if not legacy.is_file():
+        return
+
+    with closing(connect()) as db, db:
+        db.execute("ATTACH DATABASE ? AS legacy", (str(legacy),))
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY)")
+        if db.execute("SELECT 1 FROM migrations WHERE name = 'auth_database'").fetchone():
+            return
+        for table in ("users", "device_permissions", "alert_rules"):
+            exists = db.execute(
+                "SELECT 1 FROM legacy.sqlite_master WHERE type = 'table' AND name = ?", (table,)
+            ).fetchone()
+            if exists:
+                db.execute(f"INSERT INTO main.{table} SELECT * FROM legacy.{table}")
+        db.execute("INSERT INTO migrations VALUES ('auth_database')")

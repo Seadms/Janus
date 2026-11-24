@@ -78,6 +78,3 @@ def set_device_role(device_id: str, username: str, role: str):
         )
 
     return {"device_id": device_id, "username": username, "role": role}
-
-
-initialize_permissions()
