@@ -78,3 +78,16 @@ def set_device_role(device_id: str, username: str, role: str):
         )
 
     return {"device_id": device_id, "username": username, "role": role}
+
+def revoke_device_role(device_id: str, username: str):
+    """Remove a user's access to a device."""
+    with connect() as db:
+        cursor = db.execute(
+            """
+            DELETE FROM device_permissions
+            WHERE device_id = ? AND username = ?
+            """,
+            (device_id, username),
+        )
+
+        return cursor.rowcount > 0

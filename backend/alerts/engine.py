@@ -1,5 +1,6 @@
 
 from backend.alerts.rules import list_alert_rules
+from backend.alerts.history import save_alert
 
 # Tracks whether a rule is currently triggered for each device.
 active_alerts = {}
@@ -45,6 +46,9 @@ def evaluate_telemetry(device_id: str, telemetry: dict):
                 "message": f"{metric} crossed alert threshold",
             })
 
-        active_alerts[key] = triggered
+            active_alerts[key] = triggered
+
+    for alert in alerts:
+        save_alert(alert)
 
     return alerts

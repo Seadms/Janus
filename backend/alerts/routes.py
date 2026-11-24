@@ -3,7 +3,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-
+from backend.alerts.history import list_user_alerts
 from backend.auth import get_current_username
 from backend.permissions import require_device_role
 from backend.alerts.rules import (
@@ -33,7 +33,7 @@ def create_rule(
     data: AlertRuleCreate,
     username: str = Depends(get_current_username),
 ):
-    require_device_role(username, device_id, "operator")
+    require_device_role(username, device_id, "admin")
     rule_id = create_alert_rule(
         device_id, data.metric, data.operator,
         data.threshold, username
@@ -57,7 +57,7 @@ def update_rule(
     data: AlertRuleUpdate,
     username: str = Depends(get_current_username),
 ):
-    require_device_role(username, device_id, "operator")
+    require_device_role(username, device_id, "admin")
     existing = get_alert_rule(rule_id)
     if existing is None or existing["device_id"] != device_id:
         raise HTTPException(status_code=404, detail="Alert rule not found")
@@ -75,10 +75,17 @@ def remove_rule(
     rule_id: int,
     username: str = Depends(get_current_username),
 ):
-    require_device_role(username, device_id, "operator")
+    require_device_role(username, device_id, "admin")
     existing = get_alert_rule(rule_id)
     if existing is None or existing["device_id"] != device_id:
         raise HTTPException(status_code=404, detail="Alert rule not found")
 
     delete_alert_rule(rule_id)
     return {"deleted": True, "id": rule_id}
+
+
+@router.get("/alerts/history")
+def get_alert_history(
+    username: str = Depends(get_current_username),
+):
+    return {"alerts": list_user_alerts(username)}
