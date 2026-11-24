@@ -3,7 +3,7 @@ import math
 import sqlite3
 import uuid
 from backend.users import bootstrap_admin, get_user
-from contextlib import asynccontextmanager, closing
+from contextlib import asynccontextmanager, closing, suppress
 from pathlib import Path
 from typing import Literal
 
@@ -12,8 +12,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from backend.auth import get_current_username
-from backend.permissions import require_device_role
+from backend.auth import decode_access_token, get_current_username
+from backend.permissions import get_device_role, require_device_role
 from backend.alerts.engine import evaluate_telemetry
 from backend.auth_routes import router as auth_router
 from backend.permission_routes import router as permission_router
@@ -23,7 +23,7 @@ DB_PATH = Path("janus.sqlite3")
 RETENTION_SECONDS = 14 * 24 * 60 * 60
 bridges = {}
 online = set()
-dashboards = set()
+dashboards = {}
 
 
 @asynccontextmanager
@@ -94,6 +94,12 @@ def require_admin(username: str = Depends(get_current_username)):
         raise HTTPException(401, "User not found")
     if not user["is_admin"]:
         raise HTTPException(403, "Administrator permission required")
+
+
+@app.get("/api/devices/{device_id}/schema")
+def read_schema(device_id: str, username: str = Depends(get_current_username)):
+    require_device_role(username, device_id, "viewer")
+    return device_schema(device_id)
 
 
 @app.post("/api/devices", status_code=201, dependencies=[Depends(require_admin)])
@@ -190,11 +196,22 @@ def save_reading(db, msg, fields):
 
 
 async def broadcast(msg: dict):
-    for ws in list(dashboards):
+    for ws, token in list(dashboards.items()):
+        try:
+            username = decode_access_token(token)
+        except HTTPException:
+            dashboards.pop(ws, None)
+            with suppress(WebSocketDisconnect, RuntimeError, OSError):
+                await ws.close(code=1008)
+            continue
+        try:
+            require_device_role(username, msg["device_id"], "viewer")
+        except HTTPException:
+            continue
         try:
             await ws.send_json(msg)
         except (WebSocketDisconnect, RuntimeError, OSError):
-            dashboards.discard(ws)
+            dashboards.pop(ws, None)
 
 
 @app.websocket("/ws/bridge")
@@ -249,25 +266,41 @@ async def bridge_socket(ws: WebSocket):
 
 @app.websocket("/ws/live")
 async def live_socket(ws: WebSocket):
+    token = ws.query_params.get("token", "")
+    try:
+        username = decode_access_token(token)
+        if get_user(username) is None:
+            raise HTTPException(401, "User not found")
+    except HTTPException:
+        await ws.close(code=1008)
+        return
     await ws.accept()
-    dashboards.add(ws)
+    dashboards[ws] = token
     try:
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
-        dashboards.discard(ws)
+        dashboards.pop(ws, None)
 
 
 @app.get("/api/devices")
-async def list_devices():
+async def list_devices(username: str = Depends(get_current_username)):
+    user = get_user(username)
+    if user is None:
+        raise HTTPException(401, "User not found")
     with closing(sqlite3.connect(DB_PATH)) as db:
         rows = db.execute("SELECT device_id, schema_json FROM devices ORDER BY device_id").fetchall()
-    details = {
-        device_id: {"name": json.loads(schema)["name"], "connected": device_id in online}
-        for device_id, schema in rows
-    }
+    details = {}
+    for device_id, schema in rows:
+        role = "admin" if user["is_admin"] else get_device_role(username, device_id)
+        if role:
+            details[device_id] = {
+                "name": json.loads(schema)["name"],
+                "connected": device_id in online,
+                "role": role,
+            }
     return {"devices": [device_id for device_id in details if details[device_id]["connected"]],
             "device_details": details}
 
